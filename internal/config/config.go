@@ -2,67 +2,73 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
-const defaultConfigFile = ".envcrypt.json"
+const (
+	CurrentVersion  = 1
+	DefaultFileName = ".envcrypt.json"
+)
 
 // Config holds the envcrypt project configuration.
 type Config struct {
-	Recipients []string `json:"recipients"`
-	EncryptedFile string   `json:"encrypted_file"`
+	Version       int      `json:"version"`
 	EnvFile       string   `json:"env_file"`
+	EncryptedFile string   `json:"encrypted_file"`
+	Recipients    []string `json:"recipients"`
+	AuditLog      string   `json:"audit_log,omitempty"`
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// DefaultConfig returns a Config populated with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Recipients:    []string{},
-		EncryptedFile: ".env.age",
+		Version:       CurrentVersion,
 		EnvFile:       ".env",
+		EncryptedFile: ".env.age",
+		Recipients:    []string{},
+		AuditLog:      ".envcrypt-audit.log",
 	}
 }
 
-// Load reads the config file from the given directory.
-func Load(dir string) (*Config, error) {
-	path := filepath.Join(dir, defaultConfigFile)
+// Load reads a Config from the given file path.
+func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, errors.New("config file not found; run 'envcrypt init' first")
-		}
-		return nil, err
+		return nil, fmt.Errorf("config: read %q: %w", path, err)
 	}
-
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid config file: %w", err)
+		return nil, fmt.Errorf("config: parse %q: %w", path, err)
 	}
 	return &cfg, nil
 }
 
-// Save writes the config to the given directory.
-func Save(dir string, cfg *Config) error {
+// Save writes the Config to the given file path, creating directories as needed.
+func Save(path string, cfg *Config) error {
 	if cfg == nil {
-		return errors.New("config must not be nil")
+		return fmt.Errorf("config: cannot save nil config")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("config: create directory: %w", err)
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("config: marshal: %w", err)
 	}
-	path := filepath.Join(dir, defaultConfigFile)
-	return os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("config: write %q: %w", path, err)
+	}
+	return nil
 }
 
-// AddRecipient appends a public key to the recipient list if not already present.
-func (c *Config) AddRecipient(pubKey string) bool {
+// AddRecipient appends a public key to the Recipients list if not already present.
+func (c *Config) AddRecipient(pubkey string) {
 	for _, r := range c.Recipients {
-		if r == pubKey {
-			return false
+		if r == pubkey {
+			return
 		}
 	}
-	c.Recipients = append(c.Recipients, pubKey)
-	return true
+	c.Recipients = append(c.Recipients, pubkey)
 }
