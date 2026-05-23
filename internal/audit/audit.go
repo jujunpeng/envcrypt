@@ -93,6 +93,25 @@ func (l *Logger) ReadAll() ([]Entry, error) {
 	return entries, nil
 }
 
+// Filter returns all entries matching the given event type.
+// If eventType is empty, all entries are returned.
+func (l *Logger) Filter(eventType EventType) ([]Entry, error) {
+	all, err := l.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if eventType == "" {
+		return all, nil
+	}
+	var filtered []Entry
+	for _, e := range all {
+		if e.Event == eventType {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
+}
+
 func splitLines(data []byte) [][]byte {
 	var lines [][]byte
 	start := 0
