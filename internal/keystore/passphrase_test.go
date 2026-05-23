@@ -100,3 +100,19 @@ func TestLoadIdentityEncryptedMissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file, got nil")
 	}
 }
+
+func TestSaveIdentityEncryptedWrongPassphraseOnLoad(t *testing.T) {
+	id := generateIdentity(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "identity.age")
+
+	if err := SaveIdentityEncrypted(path, id, "correct-passphrase"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	_, err := LoadIdentityEncrypted(path, "wrong-passphrase")
+	if err == nil {
+		t.Fatal("expected error when loading with wrong passphrase, got nil")
+	}
+}
