@@ -1,105 +1,123 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
-	"github.com/yourorg/envcrypt/internal/config"
-	"github.com/yourorg/envcrypt/internal/sync"
+	"github.com/spf13/cobra"
+
+	"envcrypt/internal/config"
+	"envcrypt/internal/keystore"
+	"envcrypt/internal/sync"
 )
 
-const usage = `envcrypt - secure .env encryption using age
-
-Usage:
-  envcrypt <command> [arguments]
-
-Commands:
-  init                  Initialize envcrypt in the current directory
-  encrypt               Encrypt the .env file
-  decrypt               Decrypt the encrypted .env file
-  add-recipient <key>   Add a recipient public key
-`
-
-// Execute parses os.Args and dispatches to the appropriate command.
-func Execute() error {
-	if len(os.Args) < 2 {
-		fmt.Print(usage)
-		return nil
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "envcrypt",
+		Short: "Securely encrypt and sync .env files using age encryption",
 	}
+	registerInitCommand(root)
+	registerEncryptCommand(root)
+	registerDecryptCommand(root)
+	registerAddRecipientCommand(root)
+	registerExportImportCommands(root)
+	registerRotateCommands(root)
+	registerAuditCommands(root)
+	registerPassphraseCommands(root)
+	registerSearchCommand(root)
+	return root
+}
 
-	switch os.Args[1] {
-	case "init":
-		return runInit()
-	case "encrypt":
-		return runEncrypt()
-	case "decrypt":
-		return runDecrypt()
-	case "add-recipient":
-		if len(os.Args) < 3 {
-			return errors.New("add-recipient requires a public key argument")
-		}
-		return runAddRecipient(os.Args[2])
-	case "help", "--help", "-h":
-		fmt.Print(usage)
-		return nil
-	default:
-		return fmt.Errorf("unknown command: %s", os.Args[1])
+// Execute is the CLI entry point.
+func Execute() {
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
 	}
 }
 
-func runInit() error {
+func registerInitCommand(root *cobra.Command) {
+	root.AddCommand(&cobra.Command{
+		Use:   "init",
+		Short: "Initialise envcrypt in the current directory",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInit(cmd, args)
+		},
+	})
+}
+
+func registerEncryptCommand(root *cobra.Command) {
+	root.AddCommand(&cobra.Command{
+		Use:   "encrypt",
+		Short: "Encrypt the .env file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runEncrypt(cmd, args)
+		},
+	})
+}
+
+func registerDecryptCommand(root *cobra.Command) {
+	root.AddCommand(&cobra.Command{
+		Use:   "decrypt",
+		Short: "Decrypt the .env.enc file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDecrypt(cmd, args)
+		},
+	})
+}
+
+func registerAddRecipientCommand(root *cobra.Command) {
+	root.AddCommand(&cobra.Command{
+		Use:   "add-recipient <name> <public-key>",
+		Short: "Add a recipient to the keystore",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAddRecipient(cmd, args)
+		},
+	})
+}
+
+func runInit(_ *cobra.Command, _ []string) error {
 	cfg := config.DefaultConfig()
-	if err := config.Save(cfg, ".envcrypt.json"); err != nil {
-		return fmt.Errorf("init: %w", err)
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
 	}
-	fmt.Println("Initialized envcrypt — created .envcrypt.json")
+	fmt.Println("Initialised envcrypt")
 	return nil
 }
 
-func runEncrypt() error {
-	cfg, err := config.Load(".envcrypt.json")
+func runEncrypt(_ *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("encrypt: %w", err)
+		return fmt.Errorf("load config: %w", err)
 	}
-	s, err := sync.New(cfg)
-	if err != nil {
-		return fmt.Errorf("encrypt: %w", err)
+	ks := keystore.New()
+	for _, r := range cfg.Recipients {
+		if addErr := ks.AddRecipient(r.Name, r.PublicKey); addErr != nil {
+			return addErr
+		}
 	}
-	if err := s.Encrypt(); err != nil {
-		return fmt.Errorf("encrypt: %w", err)
-	}
-	fmt.Printf("Encrypted %s -> %s\n", cfg.EnvFile, cfg.EncryptedFile)
-	return nil
+	s := sync.New(cfg, ks)
+	return s.Encrypt()
 }
 
-func runDecrypt() error {
-	cfg, err := config.Load(".envcrypt.json")
+func runDecrypt(_ *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("decrypt: %w", err)
+		return fmt.Errorf("load config: %w", err)
 	}
-	s, err := sync.New(cfg)
-	if err != nil {
-		return fmt.Errorf("decrypt: %w", err)
-	}
-	if err := s.Decrypt(); err != nil {
-		return fmt.Errorf("decrypt: %w", err)
-	}
-	fmt.Printf("Decrypted %s -> %s\n", cfg.EncryptedFile, cfg.EnvFile)
-	return nil
+	ks := keystore.New()
+	s := sync.New(cfg, ks)
+	return s.Decrypt()
 }
 
-func runAddRecipient(pubKey string) error {
-	cfg, err := config.Load(".envcrypt.json")
+func runAddRecipient(_ *cobra.Command, args []string) error {
+	name, pubKey := args[0], args[1]
+	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("add-recipient: %w", err)
+		return fmt.Errorf("load config: %w", err)
 	}
-	if err := cfg.AddRecipient(pubKey); err != nil {
-		return fmt.Errorf("add-recipient: %w", err)
+	if addErr := config.AddRecipient(cfg, name, pubKey); addErr != nil {
+		return addErr
 	}
-	if err := config.Save(cfg, ".envcrypt.json"); err != nil {
-		return fmt.Errorf("add-recipient: %w", err)
-	}
-	fmt.Printf("Added recipient: %s\n", pubKey)
-	return nil
+	return config.Save(cfg)
 }
